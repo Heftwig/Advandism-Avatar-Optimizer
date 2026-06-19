@@ -3,7 +3,9 @@ It's a personal project in the direction of optimizing avatars by any means, hav
 This project is going to be expanded, it will include more tools and features to optimize your own avatars with ease.
 
 Currently supports:
-- triangle simplification heavily modified version of [Unity Mesh Simplification](https://github.com/Whinarn/UnityMeshSimplifier)
+- Triangle simplification heavily modified version of [Unity Mesh Simplification](https://github.com/Whinarn/UnityMeshSimplifier)
+- Material merger (partial shader compability, work in progress)
+- Mesh merger
 
 ## How to Use
 In "Tools" you open the UI and see for yourself.
