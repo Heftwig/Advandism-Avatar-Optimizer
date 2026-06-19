@@ -27,6 +27,12 @@ internal static class MaterialMergerAssetUtility
     private static readonly HashSet<string> UndoProtectedAssetPaths =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+    // Outputs created or assigned by the most recent merge are protected from
+    // the cleanup pass that immediately follows that merge. This prevents the
+    // cleanup option from deleting the material/texture/mesh it just created.
+    private static readonly HashSet<string> PendingMergeOutputAssetPaths =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     public sealed class CleanupResult
     {
         public readonly List<string> DeletedAssetPaths = new List<string>();
@@ -132,6 +138,9 @@ internal static class MaterialMergerAssetUtility
         if (!EnsureFolderExists(normalizedOutputFolder, out string folderError))
             throw new InvalidOperationException(folderError);
 
+        HashSet<string> outputAssetsBeforeMerge = FindGeneratedOutputAssetPaths(
+            normalizedOutputFolder);
+
         Type mergerUtilityType = FindMaterialMergerUtilityType();
         MethodInfo mergeMethod = FindBestMergeMethod(mergerUtilityType, out bool acceptsOutputFolder);
         object[] mergeArguments = BuildMergeArguments(
@@ -157,6 +166,14 @@ internal static class MaterialMergerAssetUtility
 
         if (!acceptsOutputFolder)
             MoveLegacyGeneratedAssets(normalizedOutputFolder);
+
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+
+        ProtectLatestMergeOutputs(
+            rootObject,
+            normalizedOutputFolder,
+            outputAssetsBeforeMerge);
     }
 
     public static void ProtectAssetsForUndo(IEnumerable<UnityEngine.Object> assets)
@@ -196,7 +213,18 @@ internal static class MaterialMergerAssetUtility
 
         HashSet<string> candidateAssetPaths = FindGeneratedOutputAssetPaths(
             normalizedOutputFolder);
-        candidateAssetPaths.ExceptWith(UndoProtectedAssetPaths);
+
+        HashSet<string> protectedAssetPaths = new HashSet<string>(
+            UndoProtectedAssetPaths,
+            StringComparer.OrdinalIgnoreCase);
+        protectedAssetPaths.UnionWith(PendingMergeOutputAssetPaths);
+
+        // Pending paths only need to survive the cleanup triggered by the
+        // merge that created them. Future cleanup runs can evaluate them
+        // normally using actual scene/project references.
+        PendingMergeOutputAssetPaths.Clear();
+
+        candidateAssetPaths.ExceptWith(protectedAssetPaths);
         if (candidateAssetPaths.Count == 0)
             return result;
 
@@ -428,6 +456,109 @@ internal static class MaterialMergerAssetUtility
         AssetDatabase.Refresh();
     }
 
+    private static void ProtectLatestMergeOutputs(
+        GameObject rootObject,
+        string outputFolder,
+        HashSet<string> outputAssetsBeforeMerge)
+    {
+        HashSet<string> outputAssetsAfterMerge = FindGeneratedOutputAssetPaths(
+            outputFolder);
+
+        foreach (string assetPath in outputAssetsAfterMerge)
+        {
+            if (outputAssetsBeforeMerge == null ||
+                !outputAssetsBeforeMerge.Contains(assetPath))
+            {
+                PendingMergeOutputAssetPaths.Add(assetPath);
+            }
+        }
+
+        if (rootObject == null)
+            return;
+
+        Renderer[] renderers = rootObject.GetComponentsInChildren<Renderer>(true);
+        for (int rendererIndex = 0; rendererIndex < renderers.Length; rendererIndex++)
+        {
+            Renderer renderer = renderers[rendererIndex];
+            if (renderer == null)
+                continue;
+
+            Material[] sharedMaterials = renderer.sharedMaterials;
+            for (int materialIndex = 0;
+                 materialIndex < sharedMaterials.Length;
+                 materialIndex++)
+            {
+                AddAssetAndDependenciesInsideFolder(
+                    sharedMaterials[materialIndex],
+                    outputFolder,
+                    PendingMergeOutputAssetPaths);
+            }
+
+            SkinnedMeshRenderer skinnedRenderer = renderer as SkinnedMeshRenderer;
+            if (skinnedRenderer != null)
+            {
+                AddAssetAndDependenciesInsideFolder(
+                    skinnedRenderer.sharedMesh,
+                    outputFolder,
+                    PendingMergeOutputAssetPaths);
+            }
+        }
+
+        MeshFilter[] meshFilters = rootObject.GetComponentsInChildren<MeshFilter>(true);
+        for (int filterIndex = 0; filterIndex < meshFilters.Length; filterIndex++)
+        {
+            AddAssetAndDependenciesInsideFolder(
+                meshFilters[filterIndex].sharedMesh,
+                outputFolder,
+                PendingMergeOutputAssetPaths);
+        }
+
+        MeshCollider[] meshColliders = rootObject.GetComponentsInChildren<MeshCollider>(true);
+        for (int colliderIndex = 0; colliderIndex < meshColliders.Length; colliderIndex++)
+        {
+            AddAssetAndDependenciesInsideFolder(
+                meshColliders[colliderIndex].sharedMesh,
+                outputFolder,
+                PendingMergeOutputAssetPaths);
+        }
+    }
+
+    private static void AddAssetAndDependenciesInsideFolder(
+        UnityEngine.Object asset,
+        string outputFolder,
+        HashSet<string> destination)
+    {
+        if (asset == null || destination == null)
+            return;
+
+        string assetPath = NormalizeAssetPath(AssetDatabase.GetAssetPath(asset));
+        if (string.IsNullOrEmpty(assetPath))
+            return;
+
+        if (IsPathInsideFolder(assetPath, outputFolder))
+            destination.Add(assetPath);
+
+        string[] dependencyPaths;
+        try
+        {
+            dependencyPaths = AssetDatabase.GetDependencies(assetPath, true);
+        }
+        catch (Exception)
+        {
+            return;
+        }
+
+        for (int dependencyIndex = 0;
+             dependencyIndex < dependencyPaths.Length;
+             dependencyIndex++)
+        {
+            string dependencyPath = NormalizeAssetPath(
+                dependencyPaths[dependencyIndex]);
+            if (IsPathInsideFolder(dependencyPath, outputFolder))
+                destination.Add(dependencyPath);
+        }
+    }
+
     private static HashSet<string> FindGeneratedOutputAssetPaths(string folderPath)
     {
         HashSet<string> assetPaths = new HashSet<string>(
@@ -496,6 +627,92 @@ internal static class MaterialMergerAssetUtility
         HashSet<string> candidateAssetPaths,
         HashSet<string> referencedAssetPaths)
     {
+        // Explicit renderer/mesh scans are more reliable than depending only
+        // on SerializedObject traversal for native renderer properties.
+        Renderer[] loadedRenderers = Resources.FindObjectsOfTypeAll<Renderer>();
+        for (int rendererIndex = 0;
+             rendererIndex < loadedRenderers.Length;
+             rendererIndex++)
+        {
+            Renderer renderer = loadedRenderers[rendererIndex];
+            if (renderer == null || EditorUtility.IsPersistent(renderer))
+                continue;
+
+            Material[] sharedMaterials = renderer.sharedMaterials;
+            for (int materialIndex = 0;
+                 materialIndex < sharedMaterials.Length;
+                 materialIndex++)
+            {
+                Material material = sharedMaterials[materialIndex];
+                if (material == null)
+                    continue;
+
+                string materialPath = NormalizeAssetPath(
+                    AssetDatabase.GetAssetPath(material));
+                if (!string.IsNullOrEmpty(materialPath))
+                {
+                    AddCandidateDependencies(
+                        materialPath,
+                        candidateAssetPaths,
+                        referencedAssetPaths);
+                }
+            }
+
+            SkinnedMeshRenderer skinnedRenderer = renderer as SkinnedMeshRenderer;
+            if (skinnedRenderer != null && skinnedRenderer.sharedMesh != null)
+            {
+                string meshPath = NormalizeAssetPath(
+                    AssetDatabase.GetAssetPath(skinnedRenderer.sharedMesh));
+                if (!string.IsNullOrEmpty(meshPath))
+                {
+                    AddCandidateDependencies(
+                        meshPath,
+                        candidateAssetPaths,
+                        referencedAssetPaths);
+                }
+            }
+        }
+
+        MeshFilter[] loadedMeshFilters = Resources.FindObjectsOfTypeAll<MeshFilter>();
+        for (int filterIndex = 0;
+             filterIndex < loadedMeshFilters.Length;
+             filterIndex++)
+        {
+            MeshFilter filter = loadedMeshFilters[filterIndex];
+            if (filter == null || EditorUtility.IsPersistent(filter) || filter.sharedMesh == null)
+                continue;
+
+            string meshPath = NormalizeAssetPath(
+                AssetDatabase.GetAssetPath(filter.sharedMesh));
+            if (!string.IsNullOrEmpty(meshPath))
+            {
+                AddCandidateDependencies(
+                    meshPath,
+                    candidateAssetPaths,
+                    referencedAssetPaths);
+            }
+        }
+
+        MeshCollider[] loadedMeshColliders = Resources.FindObjectsOfTypeAll<MeshCollider>();
+        for (int colliderIndex = 0;
+             colliderIndex < loadedMeshColliders.Length;
+             colliderIndex++)
+        {
+            MeshCollider collider = loadedMeshColliders[colliderIndex];
+            if (collider == null || EditorUtility.IsPersistent(collider) || collider.sharedMesh == null)
+                continue;
+
+            string meshPath = NormalizeAssetPath(
+                AssetDatabase.GetAssetPath(collider.sharedMesh));
+            if (!string.IsNullOrEmpty(meshPath))
+            {
+                AddCandidateDependencies(
+                    meshPath,
+                    candidateAssetPaths,
+                    referencedAssetPaths);
+            }
+        }
+
         Component[] loadedComponents = Resources.FindObjectsOfTypeAll<Component>();
         for (int componentIndex = 0;
              componentIndex < loadedComponents.Length;
