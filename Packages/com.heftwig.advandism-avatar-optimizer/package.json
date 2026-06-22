@@ -1,0 +1,17 @@
+{
+  "name": "com.heftwig.advandism-avatar-optimizer",
+  "displayName": "Advandism Avatar Optimizer",
+  "version": "1.0.0",
+  "unity": "2022.3",
+  "description": "Avatar optimization for VRChat avatars.",
+  "author": {
+    "name": "Heftwig",
+    "email": "nilpersonal2@gmail.com"
+  },
+  "vpmDependencies": {
+    "com.vrchat.avatars": "3.x.x"
+  },
+  "legacyFolders": {
+    "Assets/avatar_tools": ""
+  }
+}
