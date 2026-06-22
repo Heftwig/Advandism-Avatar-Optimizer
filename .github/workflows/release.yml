@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      packagePath: Packages/${{ vars.PACKAGE_NAME }}
+      packagePath: Packages/com.heftwig.advandism-avatar-optimizer
 
     steps:
       - name: Checkout
