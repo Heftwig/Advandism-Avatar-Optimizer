@@ -11,7 +11,7 @@ using UnityEngine;
 /// generated-asset relocation, and unused output cleanup.
 /// Keep this file inside an Editor folder.
 /// </summary>
-internal static class MaterialMergerAssetUtility
+public static class MaterialMergerAssetUtility
 {
     public const string DefaultOutputFolder = "Assets/Atlas_merger";
 

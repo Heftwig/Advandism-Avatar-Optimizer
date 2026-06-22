@@ -8,7 +8,7 @@ using UnityEngine;
 /// Saves combined meshes as standalone assets and removes unused standalone mesh assets
 /// from a user-selected folder. Keep this file inside an Editor folder.
 /// </summary>
-internal static class CombinedMeshAssetUtility
+public static class CombinedMeshAssetUtility
 {
     public const string DefaultSaveFolder = "Assets/CombinedMeshes";
 
@@ -321,7 +321,7 @@ internal static class CombinedMeshAssetUtility
         return new string(characters);
     }
 
-    internal sealed class CleanupResult
+    public sealed class CleanupResult
     {
         public readonly List<string> MovedToTrashPaths = new List<string>();
         public readonly List<string> FailedPaths = new List<string>();
