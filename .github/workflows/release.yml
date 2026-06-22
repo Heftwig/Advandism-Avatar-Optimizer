@@ -1,0 +1,51 @@
+name: Build Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      packagePath: Packages/${{ vars.PACKAGE_NAME }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get package info
+        id: pkg
+        run: |
+          VERSION=$(node -p "require('./${{ env.packagePath }}/package.json').version")
+          NAME=$(node -p "require('./${{ env.packagePath }}/package.json').name")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "zipFile=$NAME-$VERSION.zip" >> "$GITHUB_OUTPUT"
+          echo "unityPackage=$NAME-$VERSION.unitypackage" >> "$GITHUB_OUTPUT"
+
+      - name: Create package zip
+        working-directory: ${{ env.packagePath }}
+        run: zip -r "${{ github.workspace }}/${{ steps.pkg.outputs.zipFile }}" .
+
+      - name: Build meta file list
+        run: find "${{ env.packagePath }}/" -name "*.meta" >> metaList
+
+      - name: Create unitypackage
+        uses: pCYSl5EDgo/create-unitypackage@v1.2.3
+        with:
+          package-path: ${{ steps.pkg.outputs.unityPackage }}
+          include-files: metaList
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.pkg.outputs.version }}
+          name: ${{ steps.pkg.outputs.name }} ${{ steps.pkg.outputs.version }}
+          files: |
+            ${{ steps.pkg.outputs.zipFile }}
+            ${{ steps.pkg.outputs.unityPackage }}
+            ${{ env.packagePath }}/package.json
