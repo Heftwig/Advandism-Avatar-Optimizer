@@ -1,17 +1,13 @@
 name: Build Repo Listing
 
-env:
-  listPublishDirectory: Website
-  pathToCi: ci
-
 on:
   workflow_dispatch:
+  release:
+    types: [published, created, edited, released]
   workflow_run:
     workflows: [Build Release]
     types:
       - completed
-  release:
-    types: [published, created, edited, unpublished, deleted, released]
 
 permissions:
   contents: read
@@ -19,40 +15,86 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: pages
   cancel-in-progress: true
 
 jobs:
   build-listing:
-    name: build-listing
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
+
+    env:
+      PACKAGE_PATH: Packages/com.heftwig.advandism-avatar-optimizer
+      LISTING_URL: https://heftwig.github.io/Advandism-Avatar-Optimizer/index.json
 
     steps:
-      - name: Checkout Local Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Checkout Automation Repository
-        uses: actions/checkout@v4
-        with:
-          repository: vrchat-community/package-list-action
-          path: ${{ env.pathToCi }}
-          clean: false
+      - name: Build index.json
+        shell: bash
+        run: |
+          mkdir -p Website
 
-      - name: Restore Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.pathToCi }}/.nuke/temp
-            ~/.nuget/packages
-          key: ${{ runner.os }}-${{ hashFiles('**/global.json', '**/*.csproj') }}
+          python3 <<'PY'
+          import json
+          import os
+          import urllib.request
 
-      - name: Build Package Version Listing
-        run: ${{ env.pathToCi }}/build.cmd BuildRepoListing --root ${{ env.pathToCi }} --list-publish-directory $GITHUB_WORKSPACE/${{ env.listPublishDirectory }} --current-package-name com.heftwig.advandism-avatar-optimizer
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          package_path = os.environ["PACKAGE_PATH"]
+          listing_url = os.environ["LISTING_URL"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+
+          with open(f"{package_path}/package.json", "r", encoding="utf-8") as f:
+              manifest = json.load(f)
+
+          package_name = manifest["name"]
+          version = manifest["version"]
+          zip_name = f"{package_name}-{version}.zip"
+          zip_url = f"https://github.com/{repo}/releases/download/{version}/{zip_name}"
+
+          version_manifest = dict(manifest)
+          version_manifest["url"] = zip_url
+
+          listing = {
+              "name": "Advandism Avatar Optimizer",
+              "id": "com.heftwig.advandism-avatar-optimizer-listing",
+              "url": listing_url,
+              "author": {
+                  "name": "Heftwig"
+              },
+              "description": "VPM listing for Advandism Avatar Optimizer.",
+              "packages": {
+                  package_name: {
+                      "versions": {
+                          version: version_manifest
+                      }
+                  }
+              }
+          }
+
+          with open("Website/index.json", "w", encoding="utf-8") as f:
+              json.dump(listing, f, indent=2)
+
+          with open("Website/index.html", "w", encoding="utf-8") as f:
+              f.write("""<!doctype html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Advandism Avatar Optimizer VPM</title>
+          </head>
+          <body>
+            <h1>Advandism Avatar Optimizer VPM</h1>
+            <p>Use this URL in VCC:</p>
+            <code>https://heftwig.github.io/Advandism-Avatar-Optimizer/index.json</code>
+          </body>
+          </html>
+          """)
+          PY
+
+          cat Website/index.json
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -60,7 +102,7 @@ jobs:
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ${{ env.listPublishDirectory }}
+          path: Website
 
       - name: Deploy to GitHub Pages
         id: deployment
