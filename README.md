@@ -11,4 +11,4 @@ Currently supports:
 In "Tools" you open the UI and see for yourself.
 
 ## Installation
-Drag and drop it into your "Assets" folder
+Open your VRChat Creator Companion (VCC) and add to the custom repo this URL ´https://heftwig.github.io/Advandism-Avatar-Optimizer/index.json´
