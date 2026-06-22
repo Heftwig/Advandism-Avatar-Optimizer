@@ -26,34 +26,45 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     env:
-      PACKAGE_PATH: Packages/com.heftwig.advandism-avatar-optimizer
       LISTING_URL: https://heftwig.github.io/Advandism-Avatar-Optimizer/index.json
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build index.json
+      - name: Build index.json from latest release
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p Website
+          mkdir -p Website tmp
+
+          LATEST_TAG="$(gh release view --json tagName --jq '.tagName')"
+          echo "Latest release tag: $LATEST_TAG"
+
+          gh release download "$LATEST_TAG" --pattern "package.json" --dir tmp --clobber
 
           python3 <<'PY'
           import json
           import os
-          import urllib.request
+          import subprocess
 
-          package_path = os.environ["PACKAGE_PATH"]
           listing_url = os.environ["LISTING_URL"]
           repo = os.environ["GITHUB_REPOSITORY"]
 
-          with open(f"{package_path}/package.json", "r", encoding="utf-8") as f:
+          latest_tag = subprocess.check_output(
+              ["gh", "release", "view", "--json", "tagName", "--jq", ".tagName"],
+              text=True
+          ).strip()
+
+          with open("tmp/package.json", "r", encoding="utf-8") as f:
               manifest = json.load(f)
 
           package_name = manifest["name"]
           version = manifest["version"]
+
           zip_name = f"{package_name}-{version}.zip"
-          zip_url = f"https://github.com/{repo}/releases/download/{version}/{zip_name}"
+          zip_url = f"https://github.com/{repo}/releases/download/{latest_tag}/{zip_name}"
 
           version_manifest = dict(manifest)
           version_manifest["url"] = zip_url
@@ -77,6 +88,7 @@ jobs:
 
           with open("Website/index.json", "w", encoding="utf-8") as f:
               json.dump(listing, f, indent=2)
+              f.write("\n")
 
           with open("Website/index.html", "w", encoding="utf-8") as f:
               f.write("""<!doctype html>
@@ -92,9 +104,9 @@ jobs:
           </body>
           </html>
           """)
-          PY
 
-          cat Website/index.json
+          print(json.dumps(listing, indent=2))
+          PY
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
